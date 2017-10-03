@@ -2,6 +2,10 @@
 name = "crates-io-changes"
 version = "0.1.0"
 authors = ["Florian Gilcher <florian.gilcher@asquera.de>"]
+license = "MIT"
+description = "A library to iterate over all changes in the crates.io index"
+homepage = "https://github.com/skade/crates-io-changes"
+repository = "https://github.com/skade/crates-io-changes"
 
 [dependencies]
 git2 = "0.6"
