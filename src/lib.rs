@@ -1,9 +1,37 @@
 extern crate git2;
+extern crate serde;
+
+extern crate serde_json;
+#[macro_use]
+extern crate serde_derive;
 
 use git2::Repository;
 use git2::*;
 
 use std::path::Path;
+
+use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct Crate {
+    name: String,
+    vers: String,
+    deps: Vec<Dependency>,
+    cksum: String,
+    features: HashMap<String, Vec<String>>,
+    yanked: bool
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct Dependency {
+    name: String,
+    req: String,
+    features: Vec<String>,
+    optional: bool,
+    default_features: bool,
+    target: Option<String>,
+    kind: String
+}
 
 pub struct CratesIndex {
     repo: Repository
@@ -23,12 +51,13 @@ pub enum ChangeType {
 #[derive(Debug)]
 pub struct Change {
     delta: Delta,
-    payload: String
+    message: Option<String>,
+    payload: Crate
 }
 
 impl Default for Change {
     fn default() -> Change {
-        Change { delta: Delta::Modified, payload: String::new() }
+        Change { delta: Delta::Modified, message: None, payload: Crate::default() }
     }
 }
 
@@ -53,8 +82,7 @@ impl CratesIndex {
 }
 
 impl<'a> IndexIter<'a> {
-    fn get_last_diff(&self, rev: Oid) -> Result<Diff, Error> {
-        let commit = self.repo.find_commit(rev)?;
+    fn get_last_diff(&self, commit: &Commit) -> Result<Diff, Error> {
         let tree = self.repo.find_tree(commit.tree_id())?;
 
         let parent = commit.parent(0)?;
@@ -74,7 +102,15 @@ impl<'a> Iterator for IndexIter<'a> {
             None => return None
         };
 
-        let diff = self.get_last_diff(rev).unwrap();
+        let commit = match self.repo.find_commit(rev) {
+            Ok(commit) => commit,
+            Err(e) => return Some(Err(e))
+        };
+
+        let diff = match self.get_last_diff(&commit) {
+            Ok(diff) => diff,
+            Err(e) => return Some(Err(e))
+        };
 
         fn file_cb(_: DiffDelta, _: f32) -> bool {
             true
@@ -82,13 +118,21 @@ impl<'a> Iterator for IndexIter<'a> {
 
         let mut change = Change::default();
 
+        change.message = commit.message().map(String::from);
+
         let res = diff.foreach(
             &mut file_cb,
             None,
             None,
             Some(&mut |delta, _, line| -> bool {
-                change.delta = delta.status();
-                change.payload.push_str(std::str::from_utf8(line.content()).unwrap());
+                if line.origin() == '+' || line.origin() == '-' {
+                    change.delta = delta.status();
+                    let payload = serde_json::from_slice::<Crate>(line.content());
+
+                    if let Ok(payload) = payload {
+                        change.payload = payload;
+                    }
+                }
                 true
             })
         );
@@ -106,7 +150,7 @@ fn test() {
     let index = CratesIndex::new("crates.io-index").unwrap();
     let iter = index.iter().unwrap();
 
-    for i in iter.take(5) {
+    for i in iter {
         println!("{:?}", i);
     }
 }
