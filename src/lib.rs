@@ -90,16 +90,38 @@ impl<'a> IndexIter<'a> {
         let parent_tree = self.repo.find_tree(parent.tree_id())?;
         self.repo.diff_tree_to_tree(Some(&tree), Some(&parent_tree), None)
     }
+
+    fn find_next_rev(&mut self) -> Option<Result<Oid, Error>> {
+        let repo = self.repo;
+
+        self.revwalk.find(|walk| {
+            let rev = match walk {
+                &Ok(r) => r,
+                &Err(ref e) => return true,
+            };
+
+            let commit = match repo.find_commit(rev) {
+                Ok(commit) => commit,
+                Err(e) => return false,
+            };
+
+            if commit.author().name() == Some("bors") {
+                true
+            } else {
+                false
+            }
+        })
+    }
 }
 
 impl<'a> Iterator for IndexIter<'a> {
     type Item = Result<Change, Error>;
 
     fn next(&mut self) -> Option<Result<Change, Error>> {
-        let rev = match self.revwalk.next() {
+        let rev = match self.find_next_rev() {
             Some(Ok(r)) => r,
             Some(Err(e)) => return Some(Err(e)),
-            None => return None
+            None => return None,
         };
 
         let commit = match self.repo.find_commit(rev) {
