@@ -13,7 +13,7 @@ use std::path::Path;
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-struct Crate {
+pub struct Crate {
     name: String,
     vers: String,
     deps: Vec<Dependency>,
@@ -23,7 +23,7 @@ struct Crate {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-struct Dependency {
+pub struct Dependency {
     name: String,
     req: String,
     features: Vec<String>,
@@ -42,22 +42,22 @@ pub struct IndexIter<'a> {
     revwalk: Revwalk<'a>
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Debug)]
 pub enum ChangeType {
     Modified,
     Deleted
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Debug)]
 pub struct Change {
-    delta: Delta,
+    delta: ChangeType,
     message: Option<String>,
     payload: Crate
 }
 
 impl Default for Change {
     fn default() -> Change {
-        Change { delta: Delta::Modified, message: None, payload: Crate::default() }
+        Change { delta: ChangeType::Modified, message: None, payload: Crate::default() }
     }
 }
 
@@ -97,12 +97,12 @@ impl<'a> IndexIter<'a> {
         self.revwalk.find(|walk| {
             let rev = match walk {
                 &Ok(r) => r,
-                &Err(ref e) => return true,
+                &Err(_) => return true,
             };
 
             let commit = match repo.find_commit(rev) {
                 Ok(commit) => commit,
-                Err(e) => return false,
+                Err(_) => return false,
             };
 
             if commit.author().name() == Some("bors") {
@@ -148,7 +148,11 @@ impl<'a> Iterator for IndexIter<'a> {
             None,
             Some(&mut |delta, _, line| -> bool {
                 if line.origin() == '+' || line.origin() == '-' {
-                    change.delta = delta.status();
+                    change.delta = match delta.status() {
+                        git2::Delta::Modified => ChangeType::Modified,
+                        git2::Delta::Deleted => ChangeType::Deleted,
+                        _ => ChangeType::Modified
+                    };
                     let payload = serde_json::from_slice::<Crate>(line.content());
 
                     if let Ok(payload) = payload {
@@ -164,7 +168,6 @@ impl<'a> Iterator for IndexIter<'a> {
             _ => Some(Ok(change))
         }
     }
-
 }
 
 #[test]
